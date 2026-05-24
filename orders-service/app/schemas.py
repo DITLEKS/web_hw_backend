@@ -8,6 +8,94 @@ from pydantic import BaseModel, Field, model_validator
 from app.enums import DeliveryType, OrderStatus, PaymentMethod, PaymentStatus
 
 
+class CustomerOut(BaseModel):
+    email:      str = Field(..., example="ivan@example.com")
+    first_name: str = Field(..., example="Иван")
+    last_name:  str = Field(..., example="Иванов")
+    phone:      Optional[str] = Field(None, example="+7 999 123-45-67")
+
+
+class LoginRequest(BaseModel):
+    email:    str = Field(..., example="admin@smartlight.ru")
+    password: str = Field(..., example="AdminPass123!")
+
+
+class UserOut(BaseModel):
+    id:         int    = Field(..., example=1)
+    email:      str   = Field(..., example="admin@smartlight.ru")
+    first_name: str   = Field(..., example="Сергей")
+    last_name:  str   = Field(..., example="Петров")
+    role:       str   = Field(..., example="admin")
+
+
+class AuthLoginData(BaseModel):
+    access_token:  str     = Field(..., example="<jwt>")
+    refresh_token: str     = Field(..., example="<refresh_jwt>")
+    expires_in:    int     = Field(..., example=900)
+    user:          UserOut
+
+
+class AuthLoginResponse(BaseModel):
+    data: AuthLoginData
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(..., example="<refresh_jwt>")
+
+
+class RefreshResponse(BaseModel):
+    data: dict[str, object]
+
+
+class DashboardToday(BaseModel):
+    orders_count:  int    = Field(..., example=12)
+    revenue:       str    = Field(..., example="8940.00")
+    new_customers: int    = Field(..., example=5)
+
+
+class RecentOrderItem(BaseModel):
+    order_number:   str = Field(..., example="LX-20260412-0042")
+    customer_email: str = Field(..., example="ivan@example.com")
+    total_amount:   str = Field(..., example="478.00")
+    status:         str = Field(..., example="confirmed")
+
+
+class LowStockItem(BaseModel):
+    sku:            str = Field(..., example="LX-UV-E27-15W")
+    name:           str = Field(..., example="Лампа УФ 15 Вт")
+    stock_quantity: int = Field(..., example=3)
+
+
+class DashboardData(BaseModel):
+    today:         DashboardToday
+    recent_orders: list[RecentOrderItem]
+    low_stock:     list[LowStockItem]
+
+
+class DashboardResponse(BaseModel):
+    data: DashboardData
+
+
+class OrderStatusUpdateRequest(BaseModel):
+    status: str = Field(..., example="confirmed")
+    tracking_number: Optional[str] = Field(None, example="SDEK-123456")
+    comment: Optional[str] = Field(None, example="Подтвержден оператором")
+
+
+class OrderStatusUpdatedData(BaseModel):
+    order_number:    str = Field(..., example="LX-20260412-0042")
+    status:          str = Field(..., example="confirmed")
+    tracking_number: Optional[str] = Field(None, example="SDEK-123456")
+    previous_status: str = Field(..., example="created")
+    changed_by:      str = Field(..., example="admin@smartlight.ru")
+    changed_at:      str = Field(..., example="2026-04-12T16:00:00Z")
+
+
+class OrderStatusUpdatedResponse(BaseModel):
+    data:    OrderStatusUpdatedData
+    message: str = Field(..., example="Статус обновлён")
+
+
 # Корзина
 
 class CartItemOut(BaseModel):
@@ -159,16 +247,17 @@ class OrderCreatedResponse(BaseModel):
 
 class OrderListItemOut(BaseModel):
     order_number: str         = Field(..., example="LX-20260412-0001")
-    status:       OrderStatus = Field(..., example=OrderStatus.confirmed)
+    customer:     CustomerOut = Field(..., description="Данные покупателя")
     total_amount: str         = Field(..., example="478.00")
-    items_count:  int         = Field(..., description="Количество позиций в заказе", example=2)
+    status:       OrderStatus = Field(..., example=OrderStatus.created)
     created_at:   str         = Field(..., example="2026-04-12T15:00:00+00:00")
 
 
 class OrderListMeta(BaseModel):
-    page:  int = Field(..., example=1)
-    limit: int = Field(..., example=10)
-    total: int = Field(..., description="Общее количество заказов", example=1)
+    page:        int = Field(..., example=1)
+    limit:       int = Field(..., example=10)
+    total:       int = Field(..., description="Общее количество заказов", example=1)
+    total_pages: int = Field(..., description="Общее количество страниц", example=1)
 
 
 class OrderListResponse(BaseModel):
@@ -192,17 +281,18 @@ class StatusHistoryItemOut(BaseModel):
 
 class OrderDetailOut(BaseModel):
     order_number:    str                      = Field(..., example="LX-20260412-0001")
-    status:          OrderStatus              = Field(..., example=OrderStatus.in_assembly)
+    status:          OrderStatus              = Field(..., example=OrderStatus.created)
+    customer:        CustomerOut              = Field(..., description="Данные покупателя")
     delivery_type:   DeliveryType             = Field(..., example=DeliveryType.courier)
     delivery_city:   Optional[str]            = Field(None, example="Москва")
     delivery_street: Optional[str]            = Field(None, example="ул. Ленина, д. 1, кв. 42")
-    delivery_zip:    Optional[str]            = Field(None, example="101000")
-    subtotal:        str                      = Field(..., example="178.00")
-    discount_amount: str                      = Field(..., example="0.00")
-    delivery_cost:   str                      = Field(..., example="300.00")
-    total_amount:    str                      = Field(..., example="478.00")
+    tracking_number: Optional[str]            = Field(None, example="SDEK-123456")
     payment_method:  PaymentMethod            = Field(..., example=PaymentMethod.card_online)
-    payment_status:  PaymentStatus            = Field(..., example=PaymentStatus.paid)
+    payment_status:  PaymentStatus            = Field(..., example=PaymentStatus.pending)
+    subtotal:        str                      = Field(..., example="478.00")
+    discount_amount: str                      = Field(..., example="0.00")
+    delivery_cost:   str                      = Field(..., example="250.00")
+    total_amount:    str                      = Field(..., example="728.00")
     promo_code:      Optional[str]            = Field(None, description="Применённый промокод")
     items:           list[OrderItemOut]       = Field(..., description="Позиции заказа")
     status_history:  list[StatusHistoryItemOut] = Field(..., description="История изменений статуса")

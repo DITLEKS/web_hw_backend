@@ -5,6 +5,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.constants import ErrorCode
+from app.core.config import settings
 from app.database import get_pool
 from app.enums import ProductStatus
 from app.schemas import (
@@ -17,7 +18,10 @@ from app.schemas import (
     ProductUpdatedResponse,
     ValidationErrorResponse,
 )
+from shared.auth import create_admin_dependency
 from shared.utils import record_to_dict
+
+get_current_admin = create_admin_dependency(settings.jwt_secret_key, settings.jwt_algorithm)
 
 
 router = APIRouter()
@@ -65,6 +69,11 @@ async def list_products(
         description="Статус товара. Без этого параметра архивные товары не показываются",
         example=ProductStatus.active,
     ),
+    search: Optional[str] = Query(
+        None,
+        description="Поиск по SKU и названию товара",
+        example="LX-LED",
+    ),
     page: int = Query(1, ge=1, description="Номер страницы (начиная с 1)", example=1),
     limit: int = Query(
         12,
@@ -87,6 +96,12 @@ async def list_products(
         conditions.append(f"p.status = ${len(params)}")
     else:
         conditions.append("p.status != 'archived'")
+
+    if search:
+        params.append(f"%{search}%")
+        conditions.append(
+            f"(p.sku ILIKE ${len(params)} OR p.name ILIKE ${len(params)})"
+        )
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -251,7 +266,11 @@ async def get_product(sku: str, pool: asyncpg.Pool = Depends(get_pool)):
         },
     },
 )
-async def create_product(body: ProductCreate, pool: asyncpg.Pool = Depends(get_pool)):
+async def create_product(
+    body: ProductCreate,
+    pool: asyncpg.Pool = Depends(get_pool),
+    _: dict = Depends(get_current_admin),
+):
     try:
         row = await pool.fetchrow(
             """
@@ -338,7 +357,10 @@ async def create_product(body: ProductCreate, pool: asyncpg.Pool = Depends(get_p
     },
 )
 async def update_product(
-    sku: str, body: ProductUpdate, pool: asyncpg.Pool = Depends(get_pool)
+    sku: str,
+    body: ProductUpdate,
+    pool: asyncpg.Pool = Depends(get_pool),
+    _: dict = Depends(get_current_admin),
 ):
     data = body.model_dump(exclude_none=True)
     if "status" in data and isinstance(data["status"], ProductStatus):
@@ -431,7 +453,11 @@ async def update_product(
         },
     },
 )
-async def delete_product(sku: str, pool: asyncpg.Pool = Depends(get_pool)):
+async def delete_product(
+    sku: str,
+    pool: asyncpg.Pool = Depends(get_pool),
+    _: dict = Depends(get_current_admin),
+):
     result = await pool.execute(
         "UPDATE products SET status = 'archived', updated_at = NOW() WHERE sku = $1",
         sku,

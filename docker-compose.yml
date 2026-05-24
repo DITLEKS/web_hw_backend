@@ -42,6 +42,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://postgres:postgres@catalog-db:5432/catalog_db
+      JWT_SECRET_KEY: supersecret-change-me
       PORT: "3001"
     ports:
       - "3001:3001"
@@ -57,6 +58,7 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@orders-db:5432/orders_db
       CATALOG_SERVICE_URL: http://catalog-service:3001
+      JWT_SECRET_KEY: supersecret-change-me
       PORT: "3002"
     ports:
       - "3002:3002"

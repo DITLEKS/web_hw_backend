@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.database import create_http_client, create_pool
-from app.routers import cart, orders
+from app.routers import auth, cart, dashboard, orders
 
 
 @asynccontextmanager
@@ -77,8 +77,10 @@ app.add_middleware(
 )
 
 
-app.include_router(cart.router,   prefix="/api/v1/cart",   tags=["Корзина"])
-app.include_router(orders.router, prefix="/api/v1/orders", tags=["Заказы"])
+app.include_router(auth.router,      prefix="/api/v1/auth",      tags=["Авторизация"])
+app.include_router(dashboard.router, prefix="/api/v1",         tags=["Dashboard"])
+app.include_router(cart.router,      prefix="/api/v1/cart",     tags=["Корзина"])
+app.include_router(orders.router,    prefix="/api/v1/orders",   tags=["Заказы"])
 
 
 @app.get("/health", tags=["Служебные"], summary="Проверка работоспособности сервиса")

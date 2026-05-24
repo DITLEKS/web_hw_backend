@@ -1,4 +1,4 @@
-from asyncio import gather as asyncio_gather
+﻿from asyncio import gather as asyncio_gather
 from decimal import Decimal
 from typing import Optional
 
@@ -6,18 +6,23 @@ import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from app.constants import DELIVERY_COSTS, ErrorCode
+from app.core.config import settings
 from app.database import get_pool
-from app.enums import DeliveryType
+from app.enums import DeliveryType, OrderStatus
 from app.schemas import (
     CreateOrderRequest,
     ErrorResponse,
     OrderCreatedResponse,
     OrderDetailResponse,
     OrderListResponse,
+    OrderStatusUpdateRequest,
+    OrderStatusUpdatedResponse,
 )
+from shared.auth import create_admin_dependency
 from shared.utils import record_to_dict
 
 router = APIRouter()
+get_current_admin = create_admin_dependency(settings.jwt_secret_key, settings.jwt_algorithm)
 
 
 async def generate_order_number(conn: asyncpg.Connection) -> str:
@@ -178,22 +183,61 @@ async def create_order(
     responses={200: {"description": "Список заказов успешно получен"}},
 )
 async def list_orders(
+    status: Optional[OrderStatus] = Query(None, description="Статус заказа для фильтрации", example=OrderStatus.created),
+    search: Optional[str] = Query(None, description="Поиск по номеру заказа или email клиента", example="LX-20260412"),
     page:  int = Query(1,  ge=1,         description="Номер страницы (начиная с 1)", example=1),
     limit: int = Query(10, ge=1, le=100, description="Количество заказов на странице (максимум 100)", example=10),
     pool: asyncpg.Pool = Depends(get_pool),
+    _: dict = Depends(get_current_admin),
 ):
-    total  = await pool.fetchval("SELECT COUNT(*) FROM orders")
+    conditions: list[str] = []
+    params: list = []
+
+    if status:
+        params.append(status.value)
+        conditions.append(f"o.status = ${len(params)}")
+
+    if search:
+        params.append(f"%{search}%")
+        conditions.append(
+            f"(o.order_number ILIKE ${len(params)} OR c.email ILIKE ${len(params)} OR c.first_name ILIKE ${len(params)} OR c.last_name ILIKE ${len(params)})"
+        )
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    total = await pool.fetchval(
+        f"SELECT COUNT(*) FROM orders o LEFT JOIN customers c ON c.id = o.customer_id {where}",
+        *params,
+    )
     offset = (page - 1) * limit
+    params += [limit, offset]
 
     rows = await pool.fetch(
-        """SELECT o.order_number, o.status, o.total_amount,
-                  (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS items_count,
-                  o.created_at
-           FROM orders o ORDER BY o.created_at DESC LIMIT $1 OFFSET $2""",
-        limit, offset,
+        f"""
+        SELECT o.order_number, o.status, o.total_amount, o.created_at,
+               json_build_object(
+                   'email', c.email,
+                   'first_name', c.first_name,
+                   'last_name', c.last_name,
+                   'phone', c.phone
+               ) AS customer
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        {where}
+        ORDER BY o.created_at DESC
+        LIMIT ${len(params) - 1} OFFSET ${len(params)}
+        """,
+        *params,
     )
 
-    return {"data": [record_to_dict(r) for r in rows], "meta": {"page": page, "limit": limit, "total": total}}
+    return {
+        "data": [record_to_dict(r) for r in rows],
+        "meta": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": -(-total // limit) if total else 0,
+        },
+    }
 
 
 @router.get(
@@ -218,14 +262,14 @@ async def list_orders(
         },
     },
 )
-async def get_order(order_number: str, pool: asyncpg.Pool = Depends(get_pool)):
+async def get_order(order_number: str, pool: asyncpg.Pool = Depends(get_pool), _: dict = Depends(get_current_admin)):
     row = await pool.fetchrow(
         """
         SELECT o.order_number, o.status, o.delivery_type,
                o.delivery_city, o.delivery_street, o.delivery_zip,
                o.subtotal, o.discount_amount, o.delivery_cost, o.total_amount,
                o.payment_method, o.payment_status, o.tracking_number,
-               pc.code AS promo_code
+               pc.code AS promo_code, o.customer_id
         FROM orders o
         LEFT JOIN promo_codes pc ON pc.id = o.promo_code_id
         WHERE o.order_number = $1
@@ -239,12 +283,116 @@ async def get_order(order_number: str, pool: asyncpg.Pool = Depends(get_pool)):
         )
 
     order = record_to_dict(row)
+    customer = await pool.fetchrow(
+        "SELECT email, first_name, last_name, phone FROM customers WHERE id = $1",
+        row["customer_id"],
+    )
+    order["customer"] = record_to_dict(customer) if customer else {"email": None, "first_name": None, "last_name": None, "phone": None}
 
     items, history = await asyncio_gather(
         pool.fetch("SELECT sku, name, quantity, unit_price, total_price FROM order_items WHERE order_id = (SELECT id FROM orders WHERE order_number = $1)", order_number),
-        pool.fetch("SELECT new_status AS status, changed_at, comment FROM order_status_history WHERE order_id = (SELECT id FROM orders WHERE order_number = $1) ORDER BY changed_at", order_number),
+        pool.fetch("SELECT old_status, new_status AS status, changed_at, comment, changed_by FROM order_status_history WHERE order_id = (SELECT id FROM orders WHERE order_number = $1) ORDER BY changed_at", order_number),
     )
 
-    order["items"]          = [record_to_dict(i) for i in items]
+    order["items"] = [record_to_dict(i) for i in items]
     order["status_history"] = [record_to_dict(h) for h in history]
     return {"data": order}
+
+
+ALLOWED_STATUS_TRANSITIONS = {
+    "created": {"confirmed", "cancelled"},
+    "confirmed": {"in_assembly", "cancelled"},
+    "in_assembly": {"shipped", "cancelled"},
+    "shipped": {"delivered", "cancelled"},
+    "delivered": set(),
+    "cancelled": set(),
+}
+
+
+@router.patch(
+    "/{order_number}/status",
+    response_model=OrderStatusUpdatedResponse,
+    summary="Изменить статус заказа",
+    description="Обновление статуса заказа администратором с комментарием и трек-номером при необходимости.",
+    responses={
+        200: {"description": "Статус заказа обновлён"},
+        400: {
+            "description": "Неверный переход статуса",
+            "content": {
+                "application/json": {
+                    "example": {"error": "invalid_status_transition", "message": "Нельзя перейти из 'created' в 'delivered'"}
+                }
+            },
+        },
+        401: {
+            "description": "Требуется JWT",
+            "content": {
+                "application/json": {
+                    "example": {"error": "unauthorized", "message": "Требуется JWT"}
+                }
+            },
+        },
+        404: {
+            "description": "Заказ не найден",
+            "model": ErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {"error": "order_not_found", "message": "Заказ не найден"}
+                }
+            },
+        },
+    },
+)
+async def update_order_status(
+    order_number: str,
+    body: OrderStatusUpdateRequest,
+    pool: asyncpg.Pool = Depends(get_pool),
+    admin: dict = Depends(get_current_admin),
+):
+    row = await pool.fetchrow("SELECT id, status FROM orders WHERE order_number = $1", order_number)
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": ErrorCode.ORDER_NOT_FOUND, "message": "Заказ не найден"},
+        )
+
+    current_status = row["status"]
+    if body.status == current_status or body.status not in ALLOWED_STATUS_TRANSITIONS.get(current_status, set()):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_status_transition", "message": f"Нельзя перейти из '{current_status}' в '{body.status}'"},
+        )
+
+    await pool.execute(
+        "UPDATE orders SET status = $1, tracking_number = $2, operator_comment = $3, updated_at = NOW() WHERE id = $4",
+        body.status,
+        body.tracking_number,
+        body.comment,
+        row["id"],
+    )
+
+    await pool.execute(
+        "INSERT INTO order_status_history (order_id, old_status, new_status, changed_by, comment) VALUES ($1, $2, $3, $4, $5)",
+        row["id"],
+        current_status,
+        body.status,
+        admin["email"],
+        body.comment,
+    )
+
+    changed_at = await pool.fetchval(
+        "SELECT changed_at FROM order_status_history WHERE order_id = $1 ORDER BY changed_at DESC LIMIT 1",
+        row["id"],
+    )
+
+    return {
+        "data": {
+            "order_number": order_number,
+            "status": body.status,
+            "tracking_number": body.tracking_number,
+            "previous_status": current_status,
+            "changed_by": admin["email"],
+            "changed_at": changed_at.isoformat() if changed_at else None,
+        },
+        "message": "Статус обновлён",
+    }
