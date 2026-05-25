@@ -9,9 +9,9 @@ from app.enums import DeliveryType, OrderStatus, PaymentMethod, PaymentStatus
 
 
 class CustomerOut(BaseModel):
-    email:      str = Field(..., example="ivan@example.com")
-    first_name: str = Field(..., example="Иван")
-    last_name:  str = Field(..., example="Иванов")
+    email:      Optional[str] = Field(None, example="ivan@example.com")
+    first_name: Optional[str] = Field(None, example="Иван")
+    last_name:  Optional[str] = Field(None, example="Иванов")
     phone:      Optional[str] = Field(None, example="+7 999 123-45-67")
 
 
@@ -23,8 +23,8 @@ class LoginRequest(BaseModel):
 class UserOut(BaseModel):
     id:         int    = Field(..., example=1)
     email:      str   = Field(..., example="admin@smartlight.ru")
-    first_name: str   = Field(..., example="Сергей")
-    last_name:  str   = Field(..., example="Петров")
+    first_name: Optional[str]   = Field(None, example="Сергей")
+    last_name:  Optional[str]   = Field(None, example="Петров")
     role:       str   = Field(..., example="admin")
 
 
@@ -43,8 +43,13 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(..., example="<refresh_jwt>")
 
 
+class RefreshData(BaseModel):
+    access_token: str = Field(..., example="<jwt>")
+    expires_in: int = Field(..., example=900)
+
+
 class RefreshResponse(BaseModel):
-    data: dict[str, object]
+    data: RefreshData
 
 
 class DashboardToday(BaseModel):
@@ -55,7 +60,7 @@ class DashboardToday(BaseModel):
 
 class RecentOrderItem(BaseModel):
     order_number:   str = Field(..., example="LX-20260412-0042")
-    customer_email: str = Field(..., example="ivan@example.com")
+    customer_email: Optional[str] = Field(None, example="ivan@example.com")
     total_amount:   str = Field(..., example="478.00")
     status:         str = Field(..., example="confirmed")
 
@@ -255,7 +260,7 @@ class OrderListItemOut(BaseModel):
 
 class OrderListMeta(BaseModel):
     page:        int = Field(..., example=1)
-    limit:       int = Field(..., example=10)
+    limit:       int = Field(..., example=20)
     total:       int = Field(..., description="Общее количество заказов", example=1)
     total_pages: int = Field(..., description="Общее количество страниц", example=1)
 
@@ -274,8 +279,10 @@ class OrderItemOut(BaseModel):
 
 
 class StatusHistoryItemOut(BaseModel):
+    old_status: Optional[str] = Field(None, example=None)
     status:     str           = Field(..., example="created")
     changed_at: str           = Field(..., example="2026-04-12T15:00:00+00:00")
+    changed_by: Optional[str] = Field(None, example="admin@smartlight.ru")
     comment:    Optional[str] = Field(None, example="Заказ создан")
 
 

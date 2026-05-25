@@ -186,7 +186,7 @@ async def list_orders(
     status: Optional[OrderStatus] = Query(None, description="Статус заказа для фильтрации", example=OrderStatus.created),
     search: Optional[str] = Query(None, description="Поиск по номеру заказа или email клиента", example="LX-20260412"),
     page:  int = Query(1,  ge=1,         description="Номер страницы (начиная с 1)", example=1),
-    limit: int = Query(10, ge=1, le=100, description="Количество заказов на странице (максимум 100)", example=10),
+    limit: int = Query(20, ge=1, le=100, description="Количество заказов на странице (максимум 100)", example=20),
     pool: asyncpg.Pool = Depends(get_pool),
     _: dict = Depends(get_current_admin),
 ):

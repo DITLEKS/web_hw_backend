@@ -34,7 +34,7 @@ class ProductListItem(BaseModel):
 
 class ProductListMeta(BaseModel):
     page:        int = Field(..., description="Текущая страница", example=1)
-    limit:       int = Field(..., description="Количество товаров на странице", example=12)
+    limit:       int = Field(..., description="Количество товаров на странице", example=10)
     total:       int = Field(..., description="Общее количество товаров по фильтру", example=42)
     total_pages: int = Field(..., description="Общее количество страниц", example=4)
 

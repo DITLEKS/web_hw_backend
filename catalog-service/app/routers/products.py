@@ -76,11 +76,11 @@ async def list_products(
     ),
     page: int = Query(1, ge=1, description="Номер страницы (начиная с 1)", example=1),
     limit: int = Query(
-        12,
+        10,
         ge=1,
         le=100,
         description="Количество товаров на странице (от 1 до 100)",
-        example=12,
+        example=10,
     ),
     pool: asyncpg.Pool = Depends(get_pool),
 ):
