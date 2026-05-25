@@ -9,7 +9,7 @@ router = APIRouter()
 get_current_admin = create_admin_dependency(settings.jwt_secret_key, settings.jwt_algorithm)
 
 
-@router.get("", response_model=DashboardResponse, summary="Dashboard", description="Статистика и предупреждения по магазинам.",)
+@router.get("/dashboard", response_model=DashboardResponse, summary="Dashboard", description="Статистика и предупреждения по магазинам.",)
 async def dashboard(
     pool=Depends(get_pool),
     http=Depends(get_http),

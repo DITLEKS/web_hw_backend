@@ -13,5 +13,5 @@ CREATE TABLE IF NOT EXISTS admins (
 );
 
 INSERT INTO admins (email, first_name, last_name, role, password_hash, is_active) VALUES
-  ('admin@smartlight.ru', 'Сергей', 'Петров', 'admin', 'qY9LkCXI64xRE+B6A7t4QNU4lkOIehVn+qr72zhqqsPtggtD9PUf4UrdRl8cd5iK', TRUE)
+  ('admin@smartlight.ru', 'Сергей', 'Петров', 'admin', 'hObuHwzc6NkkB9CmrJZZUOfgNTnQUSUqJSKEDeC+Bw6+8T5UzAoE1jYks8CbZ2Ae', TRUE)
 ON CONFLICT (email) DO NOTHING;
