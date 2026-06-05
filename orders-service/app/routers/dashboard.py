@@ -1,3 +1,4 @@
+from asyncio import gather as asyncio_gather
 from fastapi import APIRouter, Depends
 from app.database import get_pool, get_http
 from app.core.config import settings
@@ -15,24 +16,23 @@ async def dashboard(
     http=Depends(get_http),
     _: dict = Depends(get_current_admin),
 ):
-    today_orders_count = await pool.fetchval(
-        "SELECT COUNT(*) FROM orders WHERE created_at >= CURRENT_DATE"
-    )
-    revenue = await pool.fetchval(
-        "SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE created_at >= CURRENT_DATE"
-    )
-    new_customers = await pool.fetchval(
-        "SELECT COUNT(*) FROM customers WHERE created_at >= CURRENT_DATE"
-    )
-
-    recent_orders_rows = await pool.fetch(
-        """
-        SELECT o.order_number, o.total_amount, o.status, c.email AS customer_email
-        FROM orders o
-        LEFT JOIN customers c ON c.id = o.customer_id
-        ORDER BY o.created_at DESC
-        LIMIT 5
-        """
+    (
+        today_orders_count,
+        revenue,
+        new_customers,
+        recent_orders_rows,
+    ) = await asyncio_gather(
+        pool.fetchval("SELECT COUNT(*) FROM orders WHERE created_at >= CURRENT_DATE"),
+        pool.fetchval("SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE created_at >= CURRENT_DATE"),
+        pool.fetchval("SELECT COUNT(*) FROM customers WHERE created_at >= CURRENT_DATE"),
+        pool.fetch(
+            """
+            SELECT o.order_number, o.total_amount, o.status, c.email AS customer_email
+            FROM orders o
+            LEFT JOIN customers c ON c.id = o.customer_id
+            ORDER BY o.created_at DESC LIMIT 5
+            """
+        ),
     )
 
     low_stock = []

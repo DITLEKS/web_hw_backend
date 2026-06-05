@@ -211,6 +211,31 @@ class CreateOrderRequest(BaseModel):
         max_length=50,
     )
 
+    first_name: str = Field(
+        ...,
+        description="Имя покупателя",
+        example="Иван",
+        max_length=100,
+    )
+    last_name: str = Field(
+        ...,
+        description="Фамилия покупателя",
+        example="Иванов",
+        max_length=100,
+    )
+    email: str = Field(
+        ...,
+        description="Email покупателя",
+        example="ivan@example.com",
+        max_length=254,
+    )
+    phone: Optional[str] = Field(
+        None,
+        description="Телефон покупателя",
+        example="+7 999 123-45-67",
+        max_length=20,
+    )
+
     @model_validator(mode="after")
     def validate_delivery_address(self) -> "CreateOrderRequest":
         if self.delivery_type in (DeliveryType.courier, DeliveryType.cdek):
@@ -226,9 +251,13 @@ class CreateOrderRequest(BaseModel):
                 "delivery_type": "courier",
                 "delivery_city": "Москва",
                 "delivery_street": "ул. Ленина, д. 1, кв. 42",
-                "delivery_zip": "101000",
-                "payment_method": "card_online",
-                "promo_code": None,
+                    "delivery_zip": "101000",
+                    "payment_method": "card_online",
+                    "promo_code": None,
+                    "first_name": "Иван",
+                    "last_name": "Иванов",
+                    "email": "ivan@example.com",
+                    "phone": "+7 999 123-45-67",
             }
         }
     }

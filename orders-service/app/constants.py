@@ -19,3 +19,13 @@ DELIVERY_COSTS: dict[DeliveryType, Decimal] = {
     DeliveryType.cdek:    Decimal("250.00"),
     DeliveryType.pickup:  Decimal("0.00"),
 }
+
+
+ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "created":     {"confirmed", "cancelled"},
+    "confirmed":   {"in_assembly", "cancelled"},
+    "in_assembly": {"shipped", "cancelled"},
+    "shipped":     {"delivered", "cancelled"},
+    "delivered":   set(),
+    "cancelled":   set(),
+}

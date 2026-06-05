@@ -5,7 +5,7 @@ from typing import Optional
 import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
-from app.constants import DELIVERY_COSTS, ErrorCode
+from app.constants import DELIVERY_COSTS, ErrorCode, ALLOWED_STATUS_TRANSITIONS
 from app.core.config import settings
 from app.database import get_pool
 from app.enums import DeliveryType, OrderStatus
@@ -136,18 +136,37 @@ async def create_order(
             total_amount      = (subtotal - discount + delivery_cost).quantize(Decimal("0.01"))
             order_number      = await generate_order_number(conn)
 
+            customer_row = await conn.fetchrow(
+                """
+                INSERT INTO customers (email, first_name, last_name, phone)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (email) DO UPDATE
+                    SET first_name = EXCLUDED.first_name,
+                        last_name  = EXCLUDED.last_name,
+                        phone      = COALESCE(EXCLUDED.phone, customers.phone),
+                        updated_at = NOW()
+                RETURNING id
+                """,
+                body.email,
+                body.first_name,
+                body.last_name,
+                body.phone,
+            )
+            customer_id = customer_row["id"]
+
             order = await conn.fetchrow(
                 """
                 INSERT INTO orders
-                    (order_number, status, delivery_type, delivery_city, delivery_street,
+                    (order_number, customer_id, status, delivery_type, delivery_city, delivery_street,
                      delivery_zip, promo_code_id, discount_amount, subtotal,
                      delivery_cost, total_amount, payment_method, payment_status)
                 VALUES
-                    ($1, 'created', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending')
+                    ($1, $2, 'created', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending')
                 RETURNING id, order_number, status, subtotal, discount_amount,
                           delivery_cost, total_amount, payment_method, payment_status
                 """,
                 order_number,
+                customer_id,
                 body.delivery_type.value, body.delivery_city, body.delivery_street,
                 body.delivery_zip, promo_id, discount, subtotal,
                 delivery_cost, total_amount, body.payment_method.value,
@@ -297,16 +316,6 @@ async def get_order(order_number: str, pool: asyncpg.Pool = Depends(get_pool), _
     order["items"] = [record_to_dict(i) for i in items]
     order["status_history"] = [record_to_dict(h) for h in history]
     return {"data": order}
-
-
-ALLOWED_STATUS_TRANSITIONS = {
-    "created": {"confirmed", "cancelled"},
-    "confirmed": {"in_assembly", "cancelled"},
-    "in_assembly": {"shipped", "cancelled"},
-    "shipped": {"delivered", "cancelled"},
-    "delivered": set(),
-    "cancelled": set(),
-}
 
 
 @router.patch(
