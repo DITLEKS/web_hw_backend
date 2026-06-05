@@ -3,7 +3,7 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 COPY orders-service/requirements.txt .
 COPY .wheels /wheels/
-RUN python -m pip install --no-index --find-links /wheels --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
 COPY shared/ ./shared/
 COPY orders-service/app/ ./app/
 EXPOSE 3002
