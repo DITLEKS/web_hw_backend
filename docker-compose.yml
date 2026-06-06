@@ -68,6 +68,26 @@ services:
       catalog-service:
         condition: service_started
 
+  admin-service:
+    build:
+      context: ./admin-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ADMIN_EMAIL: admin@test.ru
+      ADMIN_PASSWORD: admin123
+      JWT_SECRET: supersecret-change-me
+      CATALOG_URL: http://catalog-service:3001
+      ORDERS_URL: http://orders-service:3002
+      PORT: "3003"
+    ports:
+      - "3003:3003"
+    depends_on:
+      catalog-service:
+        condition: service_started
+      orders-service:
+        condition: service_started
+
 volumes:
   catalog-db-data:
   orders-db-data:

@@ -489,7 +489,7 @@ async def update_order_status(
         row["id"],
         current_status,
         body.status,
-        admin["email"],
+        admin.get("email") or admin.get("sub", "admin"),
         body.comment,
     )
 
@@ -504,7 +504,7 @@ async def update_order_status(
             "status": body.status,
             "tracking_number": body.tracking_number,
             "previous_status": current_status,
-            "changed_by": admin["email"],
+            "changed_by": admin.get("email") or admin.get("sub", "admin"),
             "changed_at": changed_at.isoformat() if changed_at else None,
         },
         "message": "Статус обновлён",
