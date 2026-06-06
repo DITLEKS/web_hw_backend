@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from shared.jwt import decode_token
@@ -43,3 +43,19 @@ def create_admin_dependency(secret_key: str, algorithm: str):
         return payload
 
     return get_current_admin
+
+
+async def validate_session_id(
+    x_session_id: Optional[str] = Header(
+        None,
+        alias="X-Session-Id",
+        description="Идентификатор сессии для доступа к своим заказам",
+    ),
+) -> str:
+    """Проверяет наличие и валидность X-Session-Id для доступа без JWT."""
+    if not x_session_id or len(x_session_id) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "session_required", "message": "Требуется заголовок X-Session-Id"},
+        )
+    return x_session_id

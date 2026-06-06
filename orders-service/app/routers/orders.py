@@ -4,6 +4,7 @@ from typing import Optional
 
 import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.constants import DELIVERY_COSTS, ErrorCode, ALLOWED_STATUS_TRANSITIONS
 from app.core.config import settings
@@ -18,8 +19,10 @@ from app.schemas import (
     OrderStatusUpdateRequest,
     OrderStatusUpdatedResponse,
 )
-from shared.auth import create_admin_dependency
+from shared.auth import create_admin_dependency, validate_session_id
+from shared.jwt import decode_token
 from shared.utils import record_to_dict
+from jwt import ExpiredSignatureError, InvalidTokenError
 
 router = APIRouter()
 get_current_admin = create_admin_dependency(settings.jwt_secret_key, settings.jwt_algorithm)
@@ -196,21 +199,64 @@ async def create_order(
     summary="История заказов",
     description=(
         "Возвращает список заказов с постраничной навигацией, "
-        "отсортированных по дате создания (новые первые). "
-        "До добавления авторизации (модуль 5) возвращает все заказы без фильтрации по пользователю."
+        "отсортированных по дате создания (новые первые).\n\n"
+        "**Доступ:**\n"
+        "- **Администраторы:** с JWT (Bearer token) — все заказы\n"
+        "- **Клиенты:** с `?email=...` и `X-Session-Id` — только свои заказы"
     ),
     responses={200: {"description": "Список заказов успешно получен"}},
 )
 async def list_orders(
     status: Optional[OrderStatus] = Query(None, description="Статус заказа для фильтрации", example=OrderStatus.created),
     search: Optional[str] = Query(None, description="Поиск по номеру заказа или email клиента", example="LX-20260412"),
+    email: Optional[str] = Query(None, description="Email клиента для фильтрации (требует X-Session-Id)", example="user@example.com"),
     page:  int = Query(1,  ge=1,         description="Номер страницы (начиная с 1)", example=1),
     limit: int = Query(20, ge=1, le=100, description="Количество заказов на странице (максимум 100)", example=20),
     pool: asyncpg.Pool = Depends(get_pool),
-    _: dict = Depends(get_current_admin),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
+    authorization: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
 ):
+    # Определяем режим доступа
+    if email:
+        # Режим клиента: требуется X-Session-Id
+        if not x_session_id or len(x_session_id) < 8:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "session_required", "message": "Требуется заголовок X-Session-Id"},
+            )
+    else:
+        # Режим администратора: требуется JWT
+        if not authorization or authorization.scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "message": "Требуется JWT"},
+            )
+        
+        try:
+            payload = decode_token(authorization.credentials, settings.jwt_secret_key, [settings.jwt_algorithm])
+        except ExpiredSignatureError:
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "message": "JWT истек"},
+            )
+        except InvalidTokenError:
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "message": "Требуется JWT"},
+            )
+        
+        if payload.get("type") != "access" or payload.get("role") != "admin":
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "message": "Требуется JWT"},
+            )
+
     conditions: list[str] = []
     params: list = []
+
+    if email:
+        params.append(email)
+        conditions.append(f"c.email = ${len(params)}")
 
     if status:
         params.append(status.value)
@@ -266,10 +312,15 @@ async def list_orders(
     description=(
         "Возвращает полную информацию о заказе: "
         "позиции, адрес доставки, данные об оплате и историю изменений статуса. "
-        "Номер заказа имеет формат `LX-YYYYMMDD-NNNN`."
+        "Номер заказа имеет формат `LX-YYYYMMDD-NNNN`.\n\n"
+        "**Доступ:**\n"
+        "- **Администраторы:** с JWT (Bearer token) — любой заказ\n"
+        "- **Клиенты:** с `?email=...` и `X-Session-Id` — только свои заказы"
     ),
     responses={
         200: {"description": "Детали заказа получены"},
+        400: {"description": "Требуется email и X-Session-Id для клиентов"},
+        403: {"description": "Заказ принадлежит другому пользователю"},
         404: {
             "description": "Заказ с таким номером не найден",
             "model": ErrorResponse,
@@ -281,7 +332,52 @@ async def list_orders(
         },
     },
 )
-async def get_order(order_number: str, pool: asyncpg.Pool = Depends(get_pool), _: dict = Depends(get_current_admin)):
+async def get_order(
+    order_number: str,
+    email: Optional[str] = Query(None, description="Email клиента для доступа к своим заказам", example="user@example.com"),
+    pool: asyncpg.Pool = Depends(get_pool),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
+    authorization: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+):
+    # Определяем режим доступа
+    is_admin = False
+    
+    if email:
+        # Режим клиента: требуется X-Session-Id
+        if not x_session_id or len(x_session_id) < 8:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "session_required", "message": "Требуется заголовок X-Session-Id"},
+            )
+    else:
+        # Режим администратора: требуется JWT
+        if not authorization or authorization.scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "message": "Требуется JWT или параметр email"},
+            )
+        
+        try:
+            payload = decode_token(authorization.credentials, settings.jwt_secret_key, [settings.jwt_algorithm])
+        except ExpiredSignatureError:
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "message": "JWT истек"},
+            )
+        except InvalidTokenError:
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "message": "Требуется JWT"},
+            )
+        
+        if payload.get("type") != "access" or payload.get("role") != "admin":
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "unauthorized", "message": "Требуется JWT"},
+            )
+        
+        is_admin = True
+
     row = await pool.fetchrow(
         """
         SELECT o.order_number, o.status, o.delivery_type,
@@ -307,6 +403,14 @@ async def get_order(order_number: str, pool: asyncpg.Pool = Depends(get_pool), _
         row["customer_id"],
     )
     order["customer"] = record_to_dict(customer) if customer else {"email": None, "first_name": None, "last_name": None, "phone": None}
+
+    # Проверка доступа для клиентов
+    if email and not is_admin:
+        if order["customer"]["email"] != email:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "forbidden", "message": "Этот заказ вам не принадлежит"},
+            )
 
     items, history = await asyncio_gather(
         pool.fetch("SELECT sku, name, quantity, unit_price, total_price FROM order_items WHERE order_id = (SELECT id FROM orders WHERE order_number = $1)", order_number),
