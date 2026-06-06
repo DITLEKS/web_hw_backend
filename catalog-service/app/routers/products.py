@@ -21,11 +21,10 @@ from app.schemas import (
 from shared.auth import create_admin_dependency
 from shared.utils import record_to_dict
 
+
 get_current_admin = create_admin_dependency(settings.jwt_secret_key, settings.jwt_algorithm)
 
-
 router = APIRouter()
-
 
 ALLOWED_PATCH_FIELDS = [
     "name", "description", "price", "old_price",
@@ -123,9 +122,32 @@ async def list_products(
                    'color_hex', c.color_hex,
                    'sort_order', c.sort_order
                ) AS category,
-               p.name, p.price, p.old_price, p.stock_quantity, p.status,
-               (SELECT url FROM product_images
-                WHERE product_id = p.id AND is_primary = TRUE LIMIT 1) AS primary_image
+               p.name,
+               p.price,
+               p.old_price,
+               p.stock_quantity,
+               p.status,
+               (
+                   SELECT url
+                   FROM product_images
+                   WHERE product_id = p.id AND is_primary = TRUE
+                   LIMIT 1
+               ) AS primary_image,
+               COALESCE(
+                   (
+                       SELECT json_agg(
+                           json_build_object(
+                               'attr_key', pa.attr_key,
+                               'attr_value', pa.attr_value,
+                               'unit', pa.unit
+                           )
+                           ORDER BY pa.id
+                       )
+                       FROM product_attributes pa
+                       WHERE pa.product_id = p.id
+                   ),
+                   '[]'::json
+               ) AS attributes
         FROM products p
         JOIN categories c ON p.category_id = c.id
         {where}
